@@ -9,9 +9,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 from model.generator import Generator
 from model.discriminator import Discriminator
+from utils.loss import calcul_gp
 from utils.layers import weights_init
 from utils.image import read_img, resize_img, torch2np
-from utils.utils import creat_reals_pyramid, generate_dir2save, generate_noise, calcul_gp
+from utils.utils import creat_reals_pyramid, generate_dir2save, generate_noise
 
 
 class SinGAN:
