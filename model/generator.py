@@ -23,7 +23,7 @@ class Generator(nn.Module):
             nn.Tanh()
         )
 
-    def forward(self, x, y):
+    def forward(self, x, y):    # x:noise, y:prev
         x = self.head(x)
         x = self.body(x)
         x = self.tail(x)

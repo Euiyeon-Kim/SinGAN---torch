@@ -41,6 +41,7 @@ def adjust_scales(real, config):
     return resized_real
 
 
+# To Do - Improve making pyramid process
 def creat_reals_pyramid(real, reals, config):
     for i in range(config.stop_scale+1):
         scale = math.pow(config.scale_factor, config.stop_scale-i)

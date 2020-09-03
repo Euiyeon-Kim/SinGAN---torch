@@ -4,6 +4,7 @@ class Config:
     useGPU = True
     manualSeed = 311385
     nc_im = 3
+    img_save_iter = 500
 
     # [DATA]
     img_path = 'Input/Images/balloons.png'

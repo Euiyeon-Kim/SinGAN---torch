@@ -1,6 +1,12 @@
 import torch.nn as nn
 
 
+def reset_grads(model, require_grad):
+    for p in model.parameters():
+        p.requires_grad_(require_grad)
+    return model
+
+
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv2d') != -1:
