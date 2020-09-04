@@ -2,8 +2,8 @@ class Config:
     # [BASIC CONFIGS]
     mode = 'train'
     useGPU = True
-    manualSeed = 311385
-    nc_im = 3
+    manualSeed = None
+    img_channel = 3
     img_save_iter = 500
 
     # [DATA]
@@ -24,7 +24,6 @@ class Config:
     kernel_size = 3
     stride = 1
     pad = 0                                     # Don't use layer padding for variation of the samples
-    num_z_channel = 3
 
     # [OPTIMIZATION PARAMETERS]
     num_iter = 2000                             # # of epochs(iteration) to train per scale

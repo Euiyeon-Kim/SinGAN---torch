@@ -23,8 +23,6 @@ def process_config(config):
     # Network parameters
     config.nfc_init = config.nfc
     config.min_nfc_init = config.min_nfc
-    # Save options
-    config.out_ = 'exps/%s/scale_factor=%f/' % (os.path.basename(config.img_path)[:-4], config.scale_factor)
 
 
 def adjust_scales(real, config):
@@ -43,6 +41,8 @@ def adjust_scales(real, config):
 
 # To Do - Improve making pyramid process
 def creat_reals_pyramid(real, reals, config):
+    import matplotlib.pyplot as plt
+    from utils.image import torch2np
     for i in range(config.stop_scale+1):
         scale = math.pow(config.scale_factor, config.stop_scale-i)
         curr_real = resize_img(real, scale, config)

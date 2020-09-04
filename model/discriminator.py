@@ -10,7 +10,7 @@ class Discriminator(nn.Module):
         self.is_cuda = torch.cuda.is_available()
         N = int(config.nfc)
 
-        self.head = ConvBlock(config.nc_im, N, config.kernel_size, 1, config.pad)
+        self.head = ConvBlock(config.img_channel, N, config.kernel_size, 1, config.pad)
 
         self.body = nn.Sequential()
         for i in range(config.num_layers - 2):

@@ -10,7 +10,7 @@ class Generator(nn.Module):
         self.is_cuda = torch.cuda.is_available()
         N = config.nfc
 
-        self.head = ConvBlock(config.nc_im, N, config.kernel_size, 1, config.pad)
+        self.head = ConvBlock(config.img_channel, N, config.kernel_size, 1, config.pad)
 
         self.body = nn.Sequential()
         for i in range(config.num_layers - 2):
@@ -19,7 +19,7 @@ class Generator(nn.Module):
             self.body.add_module('block%d' % (i+1), block)
 
         self.tail = nn.Sequential(
-            nn.Conv2d(max(N,config.min_nfc), config.nc_im, kernel_size=config.kernel_size, stride =1, padding=config.pad),
+            nn.Conv2d(max(N,config.min_nfc), config.img_channel, kernel_size=config.kernel_size, stride=1, padding=config.pad),
             nn.Tanh()
         )
 
