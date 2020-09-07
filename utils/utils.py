@@ -41,8 +41,6 @@ def adjust_scales(real, config):
 
 # To Do - Improve making pyramid process
 def creat_reals_pyramid(real, reals, config):
-    import matplotlib.pyplot as plt
-    from utils.image import torch2np
     for i in range(config.stop_scale+1):
         scale = math.pow(config.scale_factor, config.stop_scale-i)
         curr_real = resize_img(real, scale, config)

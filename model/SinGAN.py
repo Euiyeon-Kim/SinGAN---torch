@@ -13,7 +13,7 @@ from model.discriminator import Discriminator
 from utils.loss import calcul_gp
 from utils.layers import weights_init, reset_grads
 from utils.image import read_img, resize_img, torch2np
-from utils.utils import creat_reals_pyramid, generate_dir2save, generate_noise
+from utils.utils import creat_reals_pyramid, generate_dir2save, generate_noise, upsampling
 
 
 class SinGAN:
@@ -106,28 +106,26 @@ class SinGAN:
 
         # Calculate noise amp(amount of info to generate) and recover prev_rec image
         if not self.Gs:
+            rec_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)
             self.first_img_input = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
             upscaled_prev_rec_img = self.first_img_input
             self.config.noise_amp = 1
         else:
+            rec_z = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
             upscaled_prev_rec_img = self.draw_sequentially('rec', noise_pad, image_pad)
             criterion = nn.MSELoss()
             rmse = torch.sqrt(criterion(real, upscaled_prev_rec_img))
             self.config.noise_amp = self.config.noise_amp_init * rmse
-
-        rec_z = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
+        padded_rec_z = noise_pad(rec_z)
+        padded_rec_img = image_pad(upscaled_prev_rec_img)
 
         for epoch in tqdm(range(self.config.num_iter), desc=f'{len(self.Gs)}th GAN'):
             # Make noise input
-            if self.Gs == []:    # Generate fixed reconstruction noise
-                rec_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)         # To Do : 밖으로 빼기
+            if not self.Gs:                                         # Generate fixed reconstruction noise
                 random_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)
             else:                                                   # Reconstruction noise: Filled 0
                 random_z = generate_noise([self.config.img_channel, real_h, real_w], device=self.config.device)
-            padded_rec_z = noise_pad(rec_z)
             padded_random_z = noise_pad(random_z)
-
-            padded_rec_img = image_pad(upscaled_prev_rec_img)
 
             # Train Discriminator: Maximize D(x) - D(G(z)) -> Minimize D(G(z)) - D(X)
             for i in range(self.config.n_critic):
@@ -214,10 +212,10 @@ class SinGAN:
         if len(self.Gs) > 0:
             if mode == 'rec':
                 count = 0
-                for G, Z_opt, cur_real, next_real, noise_amp in zip(self.Gs, self.Zs, self.reals, self.reals[1:], self.noise_amps):
+                for G, padded_rec_z, cur_real, next_real, noise_amp in zip(self.Gs, self.Zs, self.reals, self.reals[1:], self.noise_amps):
                     upscaled_prev = upscaled_prev[:, :, 0:cur_real.shape[2], 0:cur_real.shape[3]]
                     padded_img = m_image(upscaled_prev)
-                    padded_img_with_z = noise_amp * Z_opt + padded_img
+                    padded_img_with_z = noise_amp * padded_rec_z + padded_img
                     generated_img = G(padded_img_with_z.detach(), padded_img)
                     up_scaled_img = resize_img(generated_img, 1/self.config.scale_factor, self.config)
                     upscaled_prev = up_scaled_img[:, :, 0:next_real.shape[2], 0:next_real.shape[3]]
@@ -225,12 +223,12 @@ class SinGAN:
             elif mode == 'rand':
                 count = 0
                 pad_noise = int(((self.config.kernel_size - 1) * self.config.num_layers) / 2)
-                for G, Z_opt, cur_real, next_real, noise_amp in zip(self.Gs, self.Zs, self.reals, self.reals[1:], self.noise_amps):
+                for G, padded_rec_z, cur_real, next_real, noise_amp in zip(self.Gs, self.Zs, self.reals, self.reals[1:], self.noise_amps):
                     if count == 0:  # Generate random 1-channel noise
-                        random_noise = generate_noise([1, Z_opt.shape[2] - 2 * pad_noise, Z_opt.shape[3] - 2 * pad_noise], device=self.config.device)
+                        random_noise = generate_noise([1, padded_rec_z.shape[2] - 2 * pad_noise, padded_rec_z.shape[3] - 2 * pad_noise], device=self.config.device)
                         random_noise = random_noise.expand(1, 3, random_noise.shape[2], random_noise.shape[3])
                     else:           # Generate random 3-channel noise
-                        random_noise = generate_noise([self.config.img_channel, Z_opt.shape[2] - 2 * pad_noise, Z_opt.shape[3] - 2 * pad_noise], device=self.config.device)
+                        random_noise = generate_noise([self.config.img_channel, padded_rec_z.shape[2] - 2 * pad_noise, padded_rec_z.shape[3] - 2 * pad_noise], device=self.config.device)
                     padded_noise = m_noise(random_noise)
                     upscaled_prev = upscaled_prev[:, :, 0:cur_real.shape[2], 0:cur_real.shape[3]]
                     padded_img = m_image(upscaled_prev)
@@ -240,5 +238,68 @@ class SinGAN:
                     upscaled_prev = up_scaled_img[:, :, 0:next_real.shape[2], 0:next_real.shape[3]]
                     count += 1
         return upscaled_prev
+
+    def load_trained_weights(self):
+        if os.path.exists(self.config.exp_dir):
+            self.Gs = torch.load(f'{self.config.exp_dir}/Gs.pth')
+            self.Zs = torch.load(f'{self.config.exp_dir}/Zs.pth')
+            self.noise_amps = torch.load(f'{self.config.exp_dir}/noiseAmp.pth')
+            self.reals = torch.load(f'{self.config.exp_dir}/reals.pth')
+
+    def create_inference_input(self, gen_start_scale, scale_h, scale_w):
+        real = self.reals[gen_start_scale]
+        real_scaled = upsampling(real, scale_h * real.shape[2], scale_w * real.shape[3])
+        if gen_start_scale == 0:
+            start_img_input = torch.full(real_scaled.shape, 0, device=self.config.device)
+        else:
+            start_img_input = resize_img(real_scaled, real_scaled.shape[2], real_scaled.shape[3])
+        return start_img_input
+
+    def inference(self, gen_start_scale, start_img_input, scale_h, scale_w, num_samples):
+        if start_img_input is None:
+            start_img_input = torch.full(self.reals[0].shape, 0, device=self.config.device)
+
+        cur_images = []
+        for idx, (G, Z_opt, noise_amp) in enumerate(zip(self.Gs, self.Zs, self.noise_amps)):
+            padding_size = ((self.config.kernel_size - 1) * self.config.num_layers) / 2
+            pad = nn.ZeroPad2d(int(padding_size))
+            output_h = (Z_opt.shape[2] - padding_size * 2) * scale_h
+            output_w = (Z_opt.shape[3] - padding_size * 2) * scale_w
+
+            prev_images = cur_images
+            cur_images = []
+            print("!")
+            for i in range(num_samples):
+                if idx == 0:
+                    rec_z = generate_noise([1, output_h, output_w], device=self.config.device)
+                    rec_z = rec_z.expand(1, 3, rec_z.shape[2], rec_z.shape[3])
+                    padded_rec_z = pad(rec_z)
+                else:
+                    rec_z = generate_noise([self.config.img_channel, output_h, output_w], device=self.config.device)
+                    padded_rec_z = pad(rec_z)
+
+                if not prev_images:
+                    padded_random_img = pad(start_img_input)
+                else:
+                    prev_img = prev_images[i]
+                    upscaled_prev_img = resize_img(prev_img, 1 / self.config.scale_factor, self.config)
+                    upscaled_prev_img = upscaled_prev_img[:, :, 0:round(scale_h * self.reals[idx].shape[2]), 0:round(scale_w * self.reals[idx].shape[3])]
+                    padded_random_img = pad(upscaled_prev_img)
+                    padded_random_img = padded_random_img[:, :, 0:padded_rec_z.shape[2], 0:padded_rec_z.shape[3]]
+                    padded_random_img = upsampling(padded_random_img, padded_rec_z.shape[2], padded_random_img.shape[3])
+
+                if idx < gen_start_scale:
+                    padded_rec_z = Z_opt
+
+                padded_random_img_with_z = noise_amp * padded_rec_z + padded_random_img
+                cur_image = G(padded_random_img_with_z.detach(), padded_random_img)
+
+                if idx == len(self.reals) - 1:
+                    plt.imsave(f'{self.config.infer_dir}/{i}.png', torch2np(cur_image.detach()), vmin=0, vmax=1)
+
+                cur_images.append(cur_image)
+
+        return cur_image.detach()
+
 
 
