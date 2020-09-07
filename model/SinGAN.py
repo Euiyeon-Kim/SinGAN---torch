@@ -106,28 +106,26 @@ class SinGAN:
 
         # Calculate noise amp(amount of info to generate) and recover prev_rec image
         if not self.Gs:
+            rec_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)
             self.first_img_input = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
             upscaled_prev_rec_img = self.first_img_input
             self.config.noise_amp = 1
         else:
+            rec_z = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
             upscaled_prev_rec_img = self.draw_sequentially('rec', noise_pad, image_pad)
             criterion = nn.MSELoss()
             rmse = torch.sqrt(criterion(real, upscaled_prev_rec_img))
             self.config.noise_amp = self.config.noise_amp_init * rmse
-
-        rec_z = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
+        padded_rec_z = noise_pad(rec_z)
+        padded_rec_img = image_pad(upscaled_prev_rec_img)
 
         for epoch in tqdm(range(self.config.num_iter), desc=f'{len(self.Gs)}th GAN'):
             # Make noise input
-            if self.Gs == []:    # Generate fixed reconstruction noise
-                rec_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)         # To Do : 밖으로 빼기
+            if not self.Gs:                                         # Generate fixed reconstruction noise
                 random_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)
             else:                                                   # Reconstruction noise: Filled 0
                 random_z = generate_noise([self.config.img_channel, real_h, real_w], device=self.config.device)
-            padded_rec_z = noise_pad(rec_z)
             padded_random_z = noise_pad(random_z)
-
-            padded_rec_img = image_pad(upscaled_prev_rec_img)
 
             # Train Discriminator: Maximize D(x) - D(G(z)) -> Minimize D(G(z)) - D(X)
             for i in range(self.config.n_critic):
