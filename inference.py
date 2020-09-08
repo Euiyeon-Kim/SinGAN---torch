@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from config import Config
 from model.SinGAN import SinGAN
 from utils.image import read_img, torch2np
-from utils.utils import generate_dir2save, process_config, adjust_scales
+from utils.utils import process_config, adjust_scales
 
 use_fixed_noise = False
 gen_start_scale = 0
@@ -19,7 +19,6 @@ if __name__ == '__main__':
     adjust_scales(inference_img, Config)
 
     Config.use_fixed_noise = use_fixed_noise
-    Config.exp_dir = generate_dir2save(Config)
     Config.infer_dir = f'{Config.exp_dir}/infer'
     os.makedirs(Config.infer_dir, exist_ok=True)
     plt.imsave(f'{Config.exp_dir}/real.png', torch2np(inference_img), vmin=0, vmax=1)

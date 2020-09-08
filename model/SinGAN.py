@@ -14,7 +14,7 @@ from model.discriminator import Discriminator
 from utils.loss import calcul_gp
 from utils.layers import weights_init, reset_grads
 from utils.image import read_img, resize_img, torch2np
-from utils.utils import creat_reals_pyramid, generate_dir2save, generate_noise, upsampling
+from utils.utils import creat_reals_pyramid, generate_noise, upsampling
 
 
 class SinGAN:
@@ -50,7 +50,6 @@ class SinGAN:
         self.reals = creat_reals_pyramid(real, self.reals, self.config)
 
         prev_nfc = 0
-        self.config.exp_dir = generate_dir2save(self.config)
         self.writer = SummaryWriter(f'{self.config.exp_dir}/logs')
 
         # Pyramid training
@@ -310,7 +309,6 @@ class SinGAN:
         real = resize_img(train_img, self.config.start_scale, self.config)
         self.reals = creat_reals_pyramid(real, self.reals, self.config)
 
-        self.config.exp_dir = generate_dir2save(self.config)
         self.config.viz_dir = f'{self.config.exp_dir}/viz'
 
         for scale_iter, (G, noise_amp) in enumerate(zip(self.Gs, self.noise_amps)):

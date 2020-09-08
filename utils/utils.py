@@ -48,13 +48,6 @@ def creat_reals_pyramid(real, reals, config):
     return reals
 
 
-def generate_dir2save(config):
-    dir2save = None
-    if (config.mode == 'train') | (config.mode == 'SR_train'):
-        dir2save = f'exp/{os.path.basename(config.img_path)[:-4]}/scale-{config.scale_factor_init}_alp-{config.alpha}'
-    return dir2save
-
-
 def upsampling(img, sx, sy):
     m = nn.Upsample(size=[round(sx), round(sy)], mode='bilinear', align_corners=True)
     return m(img)

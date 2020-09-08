@@ -6,11 +6,6 @@ class Config:
     img_channel = 3
     img_save_iter = 500
 
-    # [DATA]
-    img_path = 'Input/Images/balloons.png'
-    generator_path = None                       # Saved generator path
-    discriminator_path = None                   # Saved discriminator path
-
     # [PYRAMID PARAMETERS]
     scale_factor = 0.75                         # Pyramid scale factor pow(0.5, 1/6)
     min_size = 25                               # Image minimal size at the coarser scale
@@ -36,3 +31,9 @@ class Config:
     beta2 = 0.999
     n_critic = 3
     generator_iter = 3
+
+    # [DATA]
+    img_path = 'Input/Images/balloons.png'
+    exp_dir = f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
+    generator_path = None                       # Saved generator path
+    discriminator_path = None                   # Saved discriminator path
