@@ -26,3 +26,8 @@ class Discriminator(nn.Module):
         x = self.body(x)
         x = self.tail(x)
         return x
+
+    def feature(self, x):
+        x = self.head(x)
+        x = self.body(x)
+        return x

@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+from torchsummary import summary
 
 from model.generator import Generator
 from model.discriminator import Discriminator
@@ -91,6 +92,7 @@ class SinGAN:
     def train_single_stage(self, cur_discriminator, cur_generator):
         real = self.reals[len(self.Gs)]
         _, _, real_h, real_w = real.shape
+        summary(cur_discriminator, real.shape[1:])
 
         # Set padding layer(Initial padding) - To Do (Change this for noise padding not zero-padding)g
         self.config.receptive_field = self.config.kernel_size + ((self.config.kernel_size - 1) * (self.config.num_layers - 1)) * self.config.stride
@@ -155,9 +157,9 @@ class SinGAN:
                 D_optimizer.step()
                 d_loss = d_real_loss + d_fake_loss + gradient_penalty
                 critic = D_x - D_G_z
-                self.log_losses[f'{len(self.Gs)}th_D/d'] = d_loss
+                self.log_losses[f'{len(self.Gs)}th_D/d'] = d_loss.item()
                 self.log_losses[f'{len(self.Gs)}th_D/d_critic'] = critic
-                self.log_losses[f'{len(self.Gs)}th_D/d_gp'] = gradient_penalty
+                self.log_losses[f'{len(self.Gs)}th_D/d_gp'] = gradient_penalty.item()
 
             # Train Generator : Maximize D(G(z)) -> Minimize -D(G(z))
             for i in range(self.config.generator_iter):
@@ -191,6 +193,7 @@ class SinGAN:
             # Log losses
             for key, value in self.log_losses.items():
                 self.writer.add_scalar(key, value, epoch)
+            self.log_losses = {}
 
             # Log image
             if epoch % self.config.img_save_iter == 0 or epoch == (self.config.num_iter - 1):
@@ -252,7 +255,7 @@ class SinGAN:
         if gen_start_scale == 0:
             start_img_input = torch.full(real_scaled.shape, 0, device=self.config.device)
         else:
-            start_img_input = resize_img(real_scaled, real_scaled.shape[2], real_scaled.shape[3])
+            start_img_input = upsampling(real_scaled, real_scaled.shape[2], real_scaled.shape[3])
         return start_img_input
 
     def inference(self, gen_start_scale, start_img_input, scale_h, scale_w, num_samples):
@@ -268,30 +271,30 @@ class SinGAN:
 
             prev_images = cur_images
             cur_images = []
-            print("!")
+
             for i in range(num_samples):
                 if idx == 0:
-                    rec_z = generate_noise([1, output_h, output_w], device=self.config.device)
-                    rec_z = rec_z.expand(1, 3, rec_z.shape[2], rec_z.shape[3])
-                    padded_rec_z = pad(rec_z)
+                    random_z = generate_noise([1, output_h, output_w], device=self.config.device)
+                    random_z = random_z.expand(1, 3, random_z.shape[2], random_z.shape[3])
+                    padded_random_z = pad(random_z)
                 else:
-                    rec_z = generate_noise([self.config.img_channel, output_h, output_w], device=self.config.device)
-                    padded_rec_z = pad(rec_z)
+                    random_z = generate_noise([self.config.img_channel, output_h, output_w], device=self.config.device)
+                    padded_random_z = pad(random_z)
+
+                if self.config.use_fixed_noise and idx < gen_start_scale:
+                    padded_random_z = Z_opt
 
                 if not prev_images:
                     padded_random_img = pad(start_img_input)
                 else:
                     prev_img = prev_images[i]
-                    upscaled_prev_img = resize_img(prev_img, 1 / self.config.scale_factor, self.config)
-                    upscaled_prev_img = upscaled_prev_img[:, :, 0:round(scale_h * self.reals[idx].shape[2]), 0:round(scale_w * self.reals[idx].shape[3])]
-                    padded_random_img = pad(upscaled_prev_img)
-                    padded_random_img = padded_random_img[:, :, 0:padded_rec_z.shape[2], 0:padded_rec_z.shape[3]]
-                    padded_random_img = upsampling(padded_random_img, padded_rec_z.shape[2], padded_random_img.shape[3])
+                    upscaled_prev_random_img = resize_img(prev_img, 1 / self.config.scale_factor, self.config)
+                    upscaled_prev_random_img = upscaled_prev_random_img[:, :, 0:round(scale_h * self.reals[idx].shape[2]), 0:round(scale_w * self.reals[idx].shape[3])]
+                    padded_random_img = pad(upscaled_prev_random_img)
+                    padded_random_img = padded_random_img[:, :, 0:padded_random_z.shape[2], 0:padded_random_z.shape[3]]
+                    padded_random_img = upsampling(padded_random_img, padded_random_z.shape[2], padded_random_z.shape[3])
 
-                if idx < gen_start_scale:
-                    padded_rec_z = Z_opt
-
-                padded_random_img_with_z = noise_amp * padded_rec_z + padded_random_img
+                padded_random_img_with_z = noise_amp * padded_random_z + padded_random_img
                 cur_image = G(padded_random_img_with_z.detach(), padded_random_img)
 
                 if idx == len(self.reals) - 1:
@@ -301,5 +304,56 @@ class SinGAN:
 
         return cur_image.detach()
 
+    def visualize_tsne(self):
+        # Prepare image pyramid
+        train_img = read_img(self.config)
+        real = resize_img(train_img, self.config.start_scale, self.config)
+        self.reals = creat_reals_pyramid(real, self.reals, self.config)
 
+        self.config.exp_dir = generate_dir2save(self.config)
+        self.config.viz_dir = f'{self.config.exp_dir}/viz'
+
+        for scale_iter, (G, noise_amp) in enumerate(zip(self.Gs, self.noise_amps)):
+            real = self.reals[scale_iter]
+            fake = self.inference(0, None, 1, 1, 1)
+            # Become larger as scale_iter increase (maximum=128)
+            self.config.nfc = min(self.config.nfc_init * pow(2, math.floor(scale_iter / 4)), 128)
+            self.config.min_nfc = min(self.config.min_nfc_init * pow(2, math.floor(scale_iter / 4)), 128)
+
+            result_dir = f'{self.config.exp_dir}/{scale_iter}'
+            cur_discriminator, cur_generator = self.init_models()
+            reset_grads(cur_discriminator, False)
+            cur_discriminator.eval()
+
+            cur_discriminator.load_state_dict(torch.load(f'{result_dir}/discriminator.pth'))
+            cur_generator.load_state_dict(torch.load(f'{result_dir}/generator.pth'))
+
+            real_feature = cur_discriminator.feature(real)
+            _, nfc, feature_h, feature_w = real_feature.shape
+            output_h = int((feature_h - self.config.kernel_size) / self.config.stride + 1)
+            output_w = int((feature_w - self.config.kernel_size) / self.config.stride + 1)
+
+            patch_real_features = []
+            for i in range(output_h):
+                for j in range(output_w):
+                    cur_real_feature = real_feature[0, :, i:i+self.config.kernel_size, j:j+self.config.kernel_size]
+                    cur_real_feature = torch.flatten(cur_real_feature)
+                    cur_real_feature = cur_real_feature.to(torch.device('cpu')).numpy()
+                    patch_real_features.append(cur_real_feature)
+
+            import numpy as np
+            from time import time
+            from sklearn.manifold import TSNE
+
+            time_start = time()
+            tsne = TSNE(n_components=2, verbose=1, perplexity=50, n_iter=3000)
+            tsne_results = tsne.fit_transform(patch_real_features)
+            print('t-SNE done! Time elapsed: {} seconds'.format(time() - time_start))
+
+            vis_x = tsne_results[:, 0]
+            vis_y = tsne_results[:, 1]
+
+            plt.scatter(vis_x, vis_y, c=np.zeros((np.shape(patch_real_features)[0])), cmap=plt.cm.get_cmap("jet", 10))
+            plt.clim(-0.5, 9.5)
+            plt.savefig(f'./real_{scale_iter}.png', dpi=500)
 
