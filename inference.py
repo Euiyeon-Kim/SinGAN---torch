@@ -8,10 +8,11 @@ from utils.image import read_img, torch2np
 from utils.utils import process_config, adjust_scales
 
 use_fixed_noise = False
+save_all_pyramid = True
 gen_start_scale = 0
 scale_h = 2
-scale_w = 4
-num_samples = 10
+scale_w = 2
+num_samples = 5
 
 if __name__ == '__main__':
     process_config(Config)
@@ -19,7 +20,8 @@ if __name__ == '__main__':
     adjust_scales(inference_img, Config)
 
     Config.use_fixed_noise = use_fixed_noise
-    Config.infer_dir = f'{Config.exp_dir}/infer'
+    Config.save_all_pyramid = save_all_pyramid
+    Config.infer_dir = f'{Config.exp_dir}/infer_pyramid' if save_all_pyramid else f'{Config.exp_dir}/infer'
     os.makedirs(Config.infer_dir, exist_ok=True)
     plt.imsave(f'{Config.exp_dir}/real.png', torch2np(inference_img), vmin=0, vmax=1)
 

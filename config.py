@@ -22,9 +22,9 @@ class Config:
 
     # [OPTIMIZATION PARAMETERS]
     num_iter = 2000                             # # of epochs(iteration) to train per scale
-    alpha = 10                                  # Reconstruction loss weight
+    rec_weights = 10                            # Reconstruction loss weight
     gamma = 1e-1
-    gp_lambda = 0.1
+    gp_weights = 0.1
     g_lr = 5e-4
     d_lr = 5e-4
     beta1 = 0.5
@@ -34,6 +34,10 @@ class Config:
 
     # [DATA]
     img_path = 'Input/Images/balloons.png'
-    exp_dir = f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
+    exp_dir = 'exp/test'                        # f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
     generator_path = None                       # Saved generator path
     discriminator_path = None                   # Saved discriminator path
+
+    # [ACM]
+    num_heads = 16
+    acm_weights = 0.1

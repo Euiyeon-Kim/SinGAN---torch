@@ -1,7 +1,7 @@
 import torch
 
 
-def calcul_gp(discriminator, real, fake, gp_lambda, device):
+def calcul_gp(discriminator, real, fake, gp_lambda, device, use_acm=True):
     alpha = torch.rand(1, 1)
     alpha = alpha.expand(real.size())
     alpha = alpha.to(device)
@@ -10,7 +10,10 @@ def calcul_gp(discriminator, real, fake, gp_lambda, device):
     interpolated = interpolated.to(device)
     interpolated = torch.autograd.Variable(interpolated, requires_grad=True)
 
-    interpolated_prob_out = discriminator(interpolated)
+    if use_acm:
+        interpolated_prob_out, _ = discriminator(interpolated)
+    else:
+        interpolated_prob_out = discriminator(interpolated)
 
     gradients = torch.autograd.grad(outputs=interpolated_prob_out, inputs=interpolated,
                                     grad_outputs=torch.ones(interpolated_prob_out.size()).to(device),

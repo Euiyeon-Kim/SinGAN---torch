@@ -10,14 +10,14 @@ from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
 
 from model.generator import Generator
-from model.discriminator import Discriminator
+from model.acm_discriminator import ACMDiscriminator
 from utils.loss import calcul_gp
 from utils.layers import weights_init, reset_grads
 from utils.image import read_img, resize_img, torch2np
 from utils.utils import creat_reals_pyramid, generate_noise, upsampling
 
 
-class SinGAN:
+class SinGAN_ACM:
     def __init__(self, config):
         self.config = config
         self.Gs = []
@@ -28,18 +28,18 @@ class SinGAN:
         self.first_img_input = None
         self.log_losses = {}
 
-    def init_models(self):
+    def init_single_layer_gan(self):
         generator = Generator(self.config).to(self.config.device)
         generator.apply(weights_init)
         if self.config.generator_path is not None:
             generator.load_state_dict(torch.load(self.config.generator_path))
         # print(generator)
 
-        discriminator = Discriminator(self.config).to(self.config.device)
+        discriminator = ACMDiscriminator(self.config).to(self.config.device)
         discriminator.apply(weights_init)
         if self.config.discriminator_path is not None:
             discriminator.load_state_dict(torch.load(self.config.discriminator_path))
-        # print(discriminator)
+        print(discriminator)
 
         return discriminator, generator
 
@@ -63,11 +63,11 @@ class SinGAN:
             os.makedirs(self.config.result_dir, exist_ok=True)
             plt.imsave(f'{self.config.result_dir}/real_scale.png', torch2np(self.reals[scale_iter]), vmin=0, vmax=1)
 
-            cur_discriminator, cur_generator = self.init_models()
+            cur_discriminator, cur_generator = self.init_single_layer_gan()
 
             if prev_nfc == self.config.nfc:
                 cur_generator.load_state_dict(torch.load(f'{self.config.exp_dir}/{scale_iter - 1}/generator.pth'))
-                cur_discriminator.load_state_dict(torch.load(f'{self.config.exp_dir}/{scale_iter - 1}/discriminator.pth'))
+                cur_discriminator.load_state_dict(torch.load(f'{self.config.exp_dir}/{scale_iter - 1}/ACM_discriminator.pth'))
 
             cur_z, cur_generator = self.train_single_stage(cur_discriminator, cur_generator)
             cur_generator = reset_grads(cur_generator, False)
@@ -92,7 +92,6 @@ class SinGAN:
     def train_single_stage(self, cur_discriminator, cur_generator):
         real = self.reals[len(self.Gs)]
         _, _, real_h, real_w = real.shape
-        summary(cur_discriminator, real.shape[1:])
 
         # Set padding layer(Initial padding) - To Do (Change this for noise padding not zero-padding)g
         self.config.receptive_field = self.config.kernel_size + ((self.config.kernel_size - 1) * (self.config.num_layers - 1)) * self.config.stride
@@ -138,28 +137,29 @@ class SinGAN:
 
                 # Train with real data
                 cur_discriminator.zero_grad()
-                real_prob_out = cur_discriminator(real)
+                real_prob_out, real_acm = cur_discriminator(real)
                 d_real_loss = -real_prob_out.mean()                         # Maximize D(X) -> Minimize -D(X)
                 d_real_loss.backward()
                 D_x = -d_real_loss.item()
 
                 # Train with fake data
                 fake = cur_generator(padded_random_img_with_z.detach(), padded_random_img)
-                fake_prob_out = cur_discriminator(fake.detach())
+                fake_prob_out, fake_acm = cur_discriminator(fake.detach())
                 d_fake_loss = fake_prob_out.mean()                          # Minimize D(G(z))
                 d_fake_loss.backward()
                 D_G_z = d_fake_loss.item()
 
                 # Gradient penalty
-                gradient_penalty = calcul_gp(cur_discriminator, real, fake, self.config.gp_weights, self.config.device, False)
+                gradient_penalty = calcul_gp(cur_discriminator, real, fake, self.config.gp_weights, self.config.device)
                 gradient_penalty.backward()
 
                 D_optimizer.step()
-                d_loss = d_real_loss + d_fake_loss + gradient_penalty
+                d_loss = d_real_loss + d_fake_loss + gradient_penalty + ((real_acm + fake_acm) * self.config.acm_weights)
                 critic = D_x - D_G_z
                 self.log_losses[f'{len(self.Gs)}th_D/d'] = d_loss.item()
                 self.log_losses[f'{len(self.Gs)}th_D/d_critic'] = critic
                 self.log_losses[f'{len(self.Gs)}th_D/d_gp'] = gradient_penalty.item()
+                self.log_losses[f'{len(self.Gs)}th_D/d_acm'] = fake_acm.item() + real_acm.item()
 
             # Train Generator : Maximize D(G(z)) -> Minimize -D(G(z))
             for i in range(self.config.generator_iter):
@@ -172,7 +172,7 @@ class SinGAN:
                 fake = cur_generator(padded_random_img_with_z.detach(), padded_random_img)
 
                 # Adversarial loss
-                fake_prob_out = cur_discriminator(fake)
+                fake_prob_out, _ = cur_discriminator(fake)
                 g_adv_loss = -fake_prob_out.mean()
                 g_adv_loss.backward()
                 g_adv_loss = g_adv_loss.item()
@@ -305,3 +305,4 @@ class SinGAN:
                 cur_images.append(cur_image)
 
         return cur_image.detach()
+
