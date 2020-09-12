@@ -1,6 +1,6 @@
-import os
 import math
 import random
+import multiprocessing
 
 import torch
 import torch.nn as nn
@@ -13,7 +13,8 @@ def process_config(config):
     print("Random Seed: ", config.manualSeed)
     random.seed(config.manualSeed)
     torch.manual_seed(config.manualSeed)
-
+    # Multiprocessing
+    config.num_cores = multiprocessing.cpu_count()
     # Device parameters
     config.useGPU = torch.cuda.is_available()
     config.device = torch.device('cuda') if config.useGPU else torch.device('cpu')

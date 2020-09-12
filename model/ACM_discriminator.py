@@ -6,7 +6,7 @@ from model.modules.acm_module import ACM
 
 
 class ACMDiscriminator(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, num_heads):
         super(ACMDiscriminator, self).__init__()
         self.is_cuda = torch.cuda.is_available()
         N = int(config.nfc)
@@ -19,7 +19,8 @@ class ACMDiscriminator(nn.Module):
             block = ConvBlock(max(2 * N, config.min_nfc), max(N, config.min_nfc), config.kernel_size, 1, config.pad)
             self.body.add_module('block%d' % (i + 1), block)
 
-        self.acm = ACM(num_heads=8, num_features=max(N, config.min_nfc), orthogonal_loss=True)
+        num_heads = int(max(N, config.min_nfc)/2)
+        self.acm = ACM(num_heads=num_heads, num_features=max(N, config.min_nfc), orthogonal_loss=True)
 
         # WGAN-GP discriminator has no activation at last layer
         self.tail = nn.Conv2d(max(N, config.min_nfc), 1, kernel_size=config.kernel_size, stride=1, padding=config.pad)
@@ -27,6 +28,6 @@ class ACMDiscriminator(nn.Module):
     def forward(self, x):
         x = self.head(x)
         x = self.body(x)
-        x, oth = self.acm(x)
+        x, oth, add_att_maps, sub_att_maps = self.acm(x)
         x = self.tail(x)
-        return x, oth
+        return x, oth, add_att_maps, sub_att_maps

@@ -11,7 +11,7 @@ def calcul_gp(discriminator, real, fake, gp_lambda, device, use_acm=True):
     interpolated = torch.autograd.Variable(interpolated, requires_grad=True)
 
     if use_acm:
-        interpolated_prob_out, _ = discriminator(interpolated)
+        interpolated_prob_out, _, _, _ = discriminator(interpolated)
     else:
         interpolated_prob_out = discriminator(interpolated)
 

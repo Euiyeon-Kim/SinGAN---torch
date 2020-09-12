@@ -40,7 +40,7 @@ class ACM(nn.Module):
         y = (x + add_feature - sub_feature) * mul_feature
         if self.orthogonal_loss:
             dp = torch.mean(add_feature * sub_feature, dim=1, keepdim=True)
-            return y, dp
+            return y, dp, add_att_maps, sub_att_maps
         else:
             return y
 
@@ -96,9 +96,8 @@ class AttendModule(nn.Module):
             weights_normalized = weights_normalized.squeeze(-1)
 
             weights_normalized = weights_normalized.view(b, self.num_heads, h, w)
-            weights_splitted = torch.split(weights_normalized, 1, 1)
-
-            return mus, weights_splitted
+            # weights_splitted = torch.split(weights_normalized, 1, 1)
+            return mus, weights_normalized
 
         return mus
 

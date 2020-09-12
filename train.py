@@ -1,5 +1,5 @@
 from config import Config
-from model.SinGAN_ACM import SinGAN_ACM as SinGAN
+from model.ACM_SinGAN import SinGAN_ACM as SinGAN
 from utils.image import read_img
 from utils.utils import process_config, adjust_scales
 

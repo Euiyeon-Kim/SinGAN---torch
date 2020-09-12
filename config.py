@@ -34,10 +34,10 @@ class Config:
 
     # [DATA]
     img_path = 'Input/Images/balloons.png'
-    exp_dir = 'exp/test'                        # f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
+    exp_dir = 'exp/one_head_for_two_channel'    # f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
     generator_path = None                       # Saved generator path
     discriminator_path = None                   # Saved discriminator path
 
     # [ACM]
     num_heads = 16
-    acm_weights = 0.1
+    acm_weights = 1

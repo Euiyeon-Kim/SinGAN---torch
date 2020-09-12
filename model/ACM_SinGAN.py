@@ -1,26 +1,37 @@
 import os
 import math
 
-import matplotlib.pyplot as plt
+import parmap
+import heatmap
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torchsummary import summary
 
 from model.generator import Generator
-from model.acm_discriminator import ACMDiscriminator
+from model.ACM_discriminator import ACMDiscriminator
 from utils.loss import calcul_gp
 from utils.layers import weights_init, reset_grads
 from utils.image import read_img, resize_img, torch2np
 from utils.utils import creat_reals_pyramid, generate_noise, upsampling
+
+global_att_dir = None
+global_epoch = None
+
+
+def save_heatmap(args):
+    img = args[0]
+    for idx, att in enumerate(args[1]):
+        heatmap.add(img, att, alpha=0.4, save=f'{global_att_dir}/{global_epoch}_{args[2]}_{idx}.png', axis='off')
 
 
 class SinGAN_ACM:
     def __init__(self, config):
         self.config = config
         self.Gs = []
+        self.Ds = []
         self.Zs = []
         self.reals = []
         self.noise_amps = []
@@ -35,7 +46,7 @@ class SinGAN_ACM:
             generator.load_state_dict(torch.load(self.config.generator_path))
         # print(generator)
 
-        discriminator = ACMDiscriminator(self.config).to(self.config.device)
+        discriminator = ACMDiscriminator(self.config, self.config.num_heads).to(self.config.device)
         discriminator.apply(weights_init)
         if self.config.discriminator_path is not None:
             discriminator.load_state_dict(torch.load(self.config.discriminator_path))
@@ -60,7 +71,8 @@ class SinGAN_ACM:
 
             # Prepare directory to save images
             self.config.result_dir = f'{self.config.exp_dir}/{scale_iter}'
-            os.makedirs(self.config.result_dir, exist_ok=True)
+            self.config.att_dir = f'{self.config.result_dir}/attention'
+            os.makedirs(self.config.att_dir, exist_ok=True)
             plt.imsave(f'{self.config.result_dir}/real_scale.png', torch2np(self.reals[scale_iter]), vmin=0, vmax=1)
 
             cur_discriminator, cur_generator = self.init_single_layer_gan()
@@ -69,18 +81,20 @@ class SinGAN_ACM:
                 cur_generator.load_state_dict(torch.load(f'{self.config.exp_dir}/{scale_iter - 1}/generator.pth'))
                 cur_discriminator.load_state_dict(torch.load(f'{self.config.exp_dir}/{scale_iter - 1}/ACM_discriminator.pth'))
 
-            cur_z, cur_generator = self.train_single_stage(cur_discriminator, cur_generator)
+            cur_z, cur_generator, cur_discriminator = self.train_single_stage(cur_discriminator, cur_generator)
             cur_generator = reset_grads(cur_generator, False)
             cur_generator.eval()
             cur_discriminator = reset_grads(cur_discriminator, False)
             cur_discriminator.eval()
 
             self.Gs.append(cur_generator)
+            self.Ds.append(cur_discriminator)
             self.Zs.append(cur_z)
             self.noise_amps.append(self.config.noise_amp)
 
             torch.save(self.Zs, f'{self.config.exp_dir}/Zs.pth')
             torch.save(self.Gs, f'{self.config.exp_dir}/Gs.pth')
+            torch.save(self.Ds, f'{self.config.exp_dir}/Ds.pth')
             torch.save(self.reals, f'{self.config.exp_dir}/reals.pth')
             torch.save(self.noise_amps, f'{self.config.exp_dir}/noiseAmp.pth')
 
@@ -137,14 +151,15 @@ class SinGAN_ACM:
 
                 # Train with real data
                 cur_discriminator.zero_grad()
-                real_prob_out, real_acm = cur_discriminator(real)
+                real_prob_out, real_acm, real_add_att_maps, real_sub_att_maps = cur_discriminator(real)
+
                 d_real_loss = -real_prob_out.mean()                         # Maximize D(X) -> Minimize -D(X)
                 d_real_loss.backward()
                 D_x = -d_real_loss.item()
 
                 # Train with fake data
                 fake = cur_generator(padded_random_img_with_z.detach(), padded_random_img)
-                fake_prob_out, fake_acm = cur_discriminator(fake.detach())
+                fake_prob_out, fake_acm, _, _ = cur_discriminator(fake.detach())
                 d_fake_loss = fake_prob_out.mean()                          # Minimize D(G(z))
                 d_fake_loss.backward()
                 D_G_z = d_fake_loss.item()
@@ -172,7 +187,7 @@ class SinGAN_ACM:
                 fake = cur_generator(padded_random_img_with_z.detach(), padded_random_img)
 
                 # Adversarial loss
-                fake_prob_out, _ = cur_discriminator(fake)
+                fake_prob_out, _, fake_add_att_maps, fake_sub_att_maps = cur_discriminator(fake)
                 g_adv_loss = -fake_prob_out.mean()
                 g_adv_loss.backward()
                 g_adv_loss = g_adv_loss.item()
@@ -197,18 +212,33 @@ class SinGAN_ACM:
 
             # Log image
             if epoch % self.config.img_save_iter == 0 or epoch == (self.config.num_iter - 1):
-                plt.imsave(f'{self.config.result_dir}/{epoch}_fake_sample.png', torch2np(fake.detach()), vmin=0, vmax=1)
+                np_real = torch2np(real)
+                np_fake = torch2np(fake.detach())
+                plt.imsave(f'{self.config.result_dir}/{epoch}_fake_sample.png', np_fake, vmin=0, vmax=1)
                 plt.imsave(f'{self.config.result_dir}/{epoch}_fixed_noise.png', torch2np(padded_rec_img_with_z.detach() * 2 - 1), vmin=0, vmax=1)
                 plt.imsave(f'{self.config.result_dir}/{epoch}_reconstruction.png', torch2np(cur_generator(padded_rec_img_with_z.detach(), padded_rec_img).detach()), vmin=0, vmax=1)
+                real_add_att_maps = real_add_att_maps.detach().to(torch.device('cpu')).numpy().transpose(1, 2, 3, 0)
+                real_sub_att_maps = real_sub_att_maps.detach().to(torch.device('cpu')).numpy().transpose(1, 2, 3, 0)
+                fake_add_att_maps = fake_add_att_maps.detach().to(torch.device('cpu')).numpy().transpose(1, 2, 3, 0)
+                fake_sub_att_maps = fake_sub_att_maps.detach().to(torch.device('cpu')).numpy().transpose(1, 2, 3, 0)
+
+                global global_att_dir
+                global global_epoch
+                global_att_dir = self.config.att_dir
+                global_epoch = epoch
+
+                parmap.map(save_heatmap, [[np_real, real_add_att_maps, 'real_add'], [np_real, real_sub_att_maps, 'real_sub'],
+                                          [np_fake, fake_add_att_maps, 'fake_add'], [np_fake, fake_sub_att_maps, 'fake_sub']],
+                           pm_pbar=False, pm_processes=4)
 
             D_scheduler.step()
             G_scheduler.step()
 
         # Save model weights
         torch.save(cur_generator.state_dict(), f'{self.config.result_dir}/generator.pth')
-        torch.save(cur_discriminator.state_dict(), f'{self.config.result_dir}/discriminator.pth')
+        torch.save(cur_discriminator.state_dict(), f'{self.config.result_dir}/ACM_discriminator.pth')
 
-        return padded_rec_z, cur_generator
+        return padded_rec_z, cur_generator, cur_discriminator
 
     def draw_sequentially(self, mode, m_noise, m_image):
         upscaled_prev = self.first_img_input
@@ -245,6 +275,7 @@ class SinGAN_ACM:
     def load_trained_weights(self):
         if os.path.exists(self.config.exp_dir):
             self.Gs = torch.load(f'{self.config.exp_dir}/Gs.pth')
+            self.Ds = torch.load(f'{self.config.exp_dir}/Ds.pth')
             self.Zs = torch.load(f'{self.config.exp_dir}/Zs.pth')
             self.noise_amps = torch.load(f'{self.config.exp_dir}/noiseAmp.pth')
             self.reals = torch.load(f'{self.config.exp_dir}/reals.pth')
