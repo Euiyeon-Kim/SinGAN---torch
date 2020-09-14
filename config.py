@@ -43,7 +43,7 @@ class Config:
 
     # [DATA]
     img_path = 'Input/Images/balloons.png'
-    exp_dir = 'exp/idea_test_noP_origin'        # f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
+    exp_dir = 'exp/same_net_for_PQ'             # f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
     generator_path = None                       # Saved generator path
     discriminator_path = None                   # Saved discriminator path
 
