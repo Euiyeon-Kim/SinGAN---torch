@@ -263,7 +263,7 @@ class SinGAN:
             start_img_input = torch.full(self.reals[0].shape, 0, device=self.config.device)
 
         cur_images = []
-        for idx, (G, Z_opt, noise_amp) in enumerate(zip(self.Gs, self.Zs, self.noise_amps)):
+        for idx, (G, Z_opt, noise_amp) in tqdm(enumerate(zip(self.Gs, self.Zs, self.noise_amps))):
             padding_size = ((self.config.kernel_size - 1) * self.config.num_layers) / 2
             pad = nn.ZeroPad2d(int(padding_size))
             output_h = (Z_opt.shape[2] - padding_size * 2) * scale_h

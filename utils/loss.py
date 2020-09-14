@@ -1,7 +1,7 @@
 import torch
 
 
-def calcul_gp(discriminator, real, fake, gp_lambda, device, use_acm=True):
+def calcul_gp(discriminator, real, fake, device, use_acm=True):
     alpha = torch.rand(1, 1)
     alpha = alpha.expand(real.size())
     alpha = alpha.to(device)
@@ -18,5 +18,5 @@ def calcul_gp(discriminator, real, fake, gp_lambda, device, use_acm=True):
     gradients = torch.autograd.grad(outputs=interpolated_prob_out, inputs=interpolated,
                                     grad_outputs=torch.ones(interpolated_prob_out.size()).to(device),
                                     create_graph=True, retain_graph=True, only_inputs=True)[0]
-    gp = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
+    gp = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
     return gp

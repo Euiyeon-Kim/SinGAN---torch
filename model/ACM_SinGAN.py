@@ -46,7 +46,7 @@ class SinGAN_ACM:
             generator.load_state_dict(torch.load(self.config.generator_path))
         # print(generator)
 
-        discriminator = ACMDiscriminator(self.config, self.config.num_heads).to(self.config.device)
+        discriminator = ACMDiscriminator(self.config, self.config.num_heads, self.reals[len(self.Gs)]).to(self.config.device)
         discriminator.apply(weights_init)
         if self.config.discriminator_path is not None:
             discriminator.load_state_dict(torch.load(self.config.discriminator_path))
@@ -135,11 +135,8 @@ class SinGAN_ACM:
         padded_rec_img = image_pad(upscaled_prev_rec_img)
 
         for epoch in tqdm(range(self.config.num_iter), desc=f'{len(self.Gs)}th GAN'):
-            # Make noise input
-            if not self.Gs:                                         # Generate fixed reconstruction noise
-                random_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)
-            else:                                                   # Reconstruction noise: Filled 0
-                random_z = generate_noise([self.config.img_channel, real_h, real_w], device=self.config.device)
+            random_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w) \
+                if not self.Gs else generate_noise([self.config.img_channel, real_h, real_w], device=self.config.device)
             padded_random_z = noise_pad(random_z)
 
             # Train Discriminator: Maximize D(x) - D(G(z)) -> Minimize D(G(z)) - D(X)
@@ -149,32 +146,33 @@ class SinGAN_ACM:
                 padded_random_img = image_pad(upscaled_prev_random_img)
                 padded_random_img_with_z = self.config.noise_amp * padded_random_z + padded_random_img
 
-                # Train with real data
+                # Calculate loss with real data
                 cur_discriminator.zero_grad()
-                real_prob_out, real_acm, real_add_att_maps, real_sub_att_maps = cur_discriminator(real)
-
+                real_prob_out, real_acm_oth, real_add_att_maps, real_sub_att_maps = cur_discriminator(real)
                 d_real_loss = -real_prob_out.mean()                         # Maximize D(X) -> Minimize -D(X)
-                d_real_loss.backward()
-                D_x = -d_real_loss.item()
 
-                # Train with fake data
+                # Calculate loss with fake data
                 fake = cur_generator(padded_random_img_with_z.detach(), padded_random_img)
-                fake_prob_out, fake_acm, _, _ = cur_discriminator(fake.detach())
+                fake_prob_out, fake_acm_oth, _, _ = cur_discriminator(fake.detach())
                 d_fake_loss = fake_prob_out.mean()                          # Minimize D(G(z))
-                d_fake_loss.backward()
-                D_G_z = d_fake_loss.item()
 
                 # Gradient penalty
-                gradient_penalty = calcul_gp(cur_discriminator, real, fake, self.config.gp_weights, self.config.device)
-                gradient_penalty.backward()
+                gradient_penalty = calcul_gp(cur_discriminator, real, fake, self.config.device)
 
+                # Update parameters
+                d_loss = d_real_loss + d_fake_loss + (gradient_penalty * self.config.gp_weights)
+                if self.config.use_acm_oth:
+                    d_loss += (torch.abs(real_acm_oth.mean()) + torch.abs(fake_acm_oth.mean())) * self.config.acm_weights
+                d_loss.backward()
                 D_optimizer.step()
-                d_loss = d_real_loss + d_fake_loss + gradient_penalty + ((real_acm + fake_acm) * self.config.acm_weights)
-                critic = D_x - D_G_z
+
+                # Log losses
+                critic = -d_real_loss.item() -d_fake_loss.item()            # D(x) - D(G_z)
                 self.log_losses[f'{len(self.Gs)}th_D/d'] = d_loss.item()
                 self.log_losses[f'{len(self.Gs)}th_D/d_critic'] = critic
                 self.log_losses[f'{len(self.Gs)}th_D/d_gp'] = gradient_penalty.item()
-                self.log_losses[f'{len(self.Gs)}th_D/d_acm'] = fake_acm.item() + real_acm.item()
+                if self.config.use_acm_oth:
+                    self.log_losses[f'{len(self.Gs)}th_D/d_oth'] = real_acm_oth.item() + fake_acm_oth.item()
 
             # Train Generator : Maximize D(G(z)) -> Minimize -D(G(z))
             for i in range(self.config.generator_iter):
@@ -189,21 +187,21 @@ class SinGAN_ACM:
                 # Adversarial loss
                 fake_prob_out, _, fake_add_att_maps, fake_sub_att_maps = cur_discriminator(fake)
                 g_adv_loss = -fake_prob_out.mean()
-                g_adv_loss.backward()
-                g_adv_loss = g_adv_loss.item()
 
                 # Reconstruction loss
                 mse_criterion = nn.MSELoss()
                 padded_rec_img_with_z = self.config.noise_amp * padded_rec_z + padded_rec_img
-                g_rec_loss = self.config.rec_weights * mse_criterion(cur_generator(padded_rec_img_with_z.detach(), padded_rec_img), real)
-                g_rec_loss.backward()
-                g_rec_loss = g_rec_loss.item()
+                g_rec_loss = mse_criterion(cur_generator(padded_rec_img_with_z.detach(), padded_rec_img), real)
 
+                # Update parameters
+                g_loss = g_adv_loss + (g_rec_loss * self.config.rec_weights)
+                g_loss.backward()
                 G_optimizer.step()
-                g_loss = g_adv_loss + (self.config.rec_weights * g_rec_loss)
+
+                # Log losses
                 self.log_losses[f'{len(self.Gs)}th_G/g'] = g_loss
-                self.log_losses[f'{len(self.Gs)}th_G/g_critic'] = -g_adv_loss
-                self.log_losses[f'{len(self.Gs)}th_G/g_rec'] = g_rec_loss
+                self.log_losses[f'{len(self.Gs)}th_G/g_critic'] = -g_adv_loss.item()
+                self.log_losses[f'{len(self.Gs)}th_G/g_rec'] = g_rec_loss.item()
 
             # Log losses
             for key, value in self.log_losses.items():
@@ -228,7 +226,7 @@ class SinGAN_ACM:
                 global_epoch = epoch
 
                 parmap.map(save_heatmap, [[np_real, real_add_att_maps, 'real_add'], [np_real, real_sub_att_maps, 'real_sub'],
-                                          [np_fake, fake_add_att_maps, 'fake_add'], [np_fake, fake_sub_att_maps, 'fake_sub']],
+                                          [np_fake, fake_add_att_maps, 'fake_add'], [np_real, fake_sub_att_maps, 'fake_sub']],
                            pm_pbar=False, pm_processes=4)
 
             D_scheduler.step()
@@ -280,30 +278,30 @@ class SinGAN_ACM:
             self.noise_amps = torch.load(f'{self.config.exp_dir}/noiseAmp.pth')
             self.reals = torch.load(f'{self.config.exp_dir}/reals.pth')
 
-    def create_inference_input(self, gen_start_scale, scale_h, scale_w):
-        real = self.reals[gen_start_scale]
-        real_scaled = upsampling(real, scale_h * real.shape[2], scale_w * real.shape[3])
-        if gen_start_scale == 0:
+    def create_inference_input(self):
+        real = self.reals[self.config.gen_start_scale]
+        real_scaled = upsampling(real, self.config.scale_h * real.shape[2], self.config.scale_w * real.shape[3])
+        if self.config.gen_start_scale == 0:
             start_img_input = torch.full(real_scaled.shape, 0, device=self.config.device)
         else:
             start_img_input = upsampling(real_scaled, real_scaled.shape[2], real_scaled.shape[3])
         return start_img_input
 
-    def inference(self, gen_start_scale, start_img_input, scale_h, scale_w, num_samples):
-        if start_img_input is None:
+    def inference(self):
+        if self.config.start_img_input is None:
             start_img_input = torch.full(self.reals[0].shape, 0, device=self.config.device)
 
         cur_images = []
         for idx, (G, Z_opt, noise_amp) in enumerate(zip(self.Gs, self.Zs, self.noise_amps)):
             padding_size = ((self.config.kernel_size - 1) * self.config.num_layers) / 2
             pad = nn.ZeroPad2d(int(padding_size))
-            output_h = (Z_opt.shape[2] - padding_size * 2) * scale_h
-            output_w = (Z_opt.shape[3] - padding_size * 2) * scale_w
+            output_h = (Z_opt.shape[2] - padding_size * 2) * self.config.scale_h
+            output_w = (Z_opt.shape[3] - padding_size * 2) * self.config.scale_w
 
             prev_images = cur_images
             cur_images = []
 
-            for i in range(num_samples):
+            for i in tqdm(range(self.config.num_samples)):
                 if idx == 0:
                     random_z = generate_noise([1, output_h, output_w], device=self.config.device)
                     random_z = random_z.expand(1, 3, random_z.shape[2], random_z.shape[3])
@@ -312,7 +310,7 @@ class SinGAN_ACM:
                     random_z = generate_noise([self.config.img_channel, output_h, output_w], device=self.config.device)
                     padded_random_z = pad(random_z)
 
-                if self.config.use_fixed_noise and idx < gen_start_scale:
+                if self.config.use_fixed_noise and idx < self.config.gen_start_scale:
                     padded_random_z = Z_opt
 
                 if not prev_images:
@@ -320,7 +318,9 @@ class SinGAN_ACM:
                 else:
                     prev_img = prev_images[i]
                     upscaled_prev_random_img = resize_img(prev_img, 1 / self.config.scale_factor, self.config)
-                    upscaled_prev_random_img = upscaled_prev_random_img[:, :, 0:round(scale_h * self.reals[idx].shape[2]), 0:round(scale_w * self.reals[idx].shape[3])]
+                    upscaled_prev_random_img = upscaled_prev_random_img[:, :,
+                                               0:round(self.config.scale_h * self.reals[idx].shape[2]),
+                                               0:round(self.config.scale_w * self.reals[idx].shape[3])]
                     padded_random_img = pad(upscaled_prev_random_img)
                     padded_random_img = padded_random_img[:, :, 0:padded_random_z.shape[2], 0:padded_random_z.shape[3]]
                     padded_random_img = upsampling(padded_random_img, padded_random_z.shape[2], padded_random_z.shape[3])
