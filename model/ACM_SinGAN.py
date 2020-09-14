@@ -116,8 +116,8 @@ class SinGAN_ACM:
         # MultiStepLR: lr *= gamma every time reaches one of the milestones
         D_optimizer = optim.Adam(cur_discriminator.parameters(), lr=self.config.d_lr, betas=(self.config.beta1, self.config.beta2))
         G_optimizer = optim.Adam(cur_generator.parameters(), lr=self.config.g_lr, betas=(self.config.beta1, self.config.beta2))
-        D_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=D_optimizer, milestones=[1600], gamma=self.config.gamma)
-        G_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=G_optimizer, milestones=[1600], gamma=self.config.gamma)
+        D_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=D_optimizer, milestones=self.config.milestones, gamma=self.config.gamma)
+        G_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=G_optimizer, milestones=self.config.milestones, gamma=self.config.gamma)
 
         # Calculate noise amp(amount of info to generate) and recover prev_rec image
         if not self.Gs:

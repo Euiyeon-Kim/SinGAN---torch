@@ -21,31 +21,31 @@ class Config:
     pad = 0                                     # Don't use layer padding for variation of the samples
 
     # [GENERATOR]
-    generator_iter = 2
+    generator_iter = 3
     rec_weights = 10                            # Reconstruction loss weight
 
     # [DISCRIMINATOR]
-    n_critic = 5
+    n_critic = 3
     gp_weights = 0.1
+    # [ACM]
+    num_heads = 8
+    use_acm_oth = False
+    acm_weights = 1
 
     # [OPTIMIZATION PARAMETERS]
     num_iter = 2000                             # # of epochs(iteration) to train per scale
+    milestones = [1600]
     gamma = 1e-1
-    g_lr = 1e-4
-    d_lr = 1e-4
+    g_lr = 5e-4
+    d_lr = 5e-4
     beta1 = 0.5
     beta2 = 0.999
 
     # [DATA]
     img_path = 'Input/Images/balloons.png'
-    exp_dir = 'exp/test'               # f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
+    exp_dir = 'exp/idea_test_noP_origin'        # f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
     generator_path = None                       # Saved generator path
     discriminator_path = None                   # Saved discriminator path
-
-    # [ACM]
-    num_heads = 16
-    acm_weights = 1
-    use_acm_oth = False
 
     # [Inference]
     use_fixed_noise = False
