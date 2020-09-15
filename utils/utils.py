@@ -8,6 +8,7 @@ from utils.image import resize_img
 
 
 def process_config(config):
+    # Setting seeds
     if config.manualSeed is None:
         config.manualSeed = random.randint(1, 10000)
     print("Random Seed: ", config.manualSeed)
@@ -24,6 +25,9 @@ def process_config(config):
     # Network parameters
     config.nfc_init = config.nfc
     config.min_nfc_init = config.min_nfc
+    # sr
+    if config.mode == 'train_SR':
+        config.alpha = 100
 
 
 def adjust_scales(real, config):
@@ -38,6 +42,16 @@ def adjust_scales(real, config):
     scale2stop = math.ceil(math.log(min([config.max_size, maxwh]) / maxwh, config.scale_factor_init))
     config.stop_scale = config.num_scales - scale2stop
     return resized_real
+
+
+def calcul_sr_scale(config):
+    in_scale = math.pow(1/2, 1/3)
+    iter_num = round(math.log(1/config.sr_factor, in_scale))
+    in_scale = pow(config.sr_factor, 1 / iter_num)
+    config.scale_factor = 1 / in_scale
+    config.scale_factor_init = 1 / in_scale
+    config.min_size = 18
+    return in_scale, iter_num
 
 
 # To Do - Improve making pyramid process

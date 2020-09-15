@@ -92,7 +92,6 @@ class SinGAN:
     def train_single_stage(self, cur_discriminator, cur_generator):
         real = self.reals[len(self.Gs)]
         _, _, real_h, real_w = real.shape
-        summary(cur_discriminator, real.shape[1:])
 
         # Set padding layer(Initial padding) - To Do (Change this for noise padding not zero-padding)g
         self.config.receptive_field = self.config.kernel_size + ((self.config.kernel_size - 1) * (self.config.num_layers - 1)) * self.config.stride
@@ -103,55 +102,65 @@ class SinGAN:
         # MultiStepLR: lr *= gamma every time reaches one of the milestones
         D_optimizer = optim.Adam(cur_discriminator.parameters(), lr=self.config.d_lr, betas=(self.config.beta1, self.config.beta2))
         G_optimizer = optim.Adam(cur_generator.parameters(), lr=self.config.g_lr, betas=(self.config.beta1, self.config.beta2))
-        D_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=D_optimizer, milestones=[1600], gamma=self.config.gamma)
-        G_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=G_optimizer, milestones=[1600], gamma=self.config.gamma)
+        D_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=D_optimizer, milestones=self.config.milestones, gamma=self.config.gamma)
+        G_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=G_optimizer, milestones=self.config.milestones, gamma=self.config.gamma)
 
-        # Calculate noise amp(amount of info to generate) and recover prev_rec image
-        if not self.Gs:
-            rec_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)
-            self.first_img_input = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
-            upscaled_prev_rec_img = self.first_img_input
-            self.config.noise_amp = 1
-        else:
-            rec_z = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
-            upscaled_prev_rec_img = self.draw_sequentially('rec', noise_pad, image_pad)
-            criterion = nn.MSELoss()
-            rmse = torch.sqrt(criterion(real, upscaled_prev_rec_img))
-            self.config.noise_amp = self.config.noise_amp_init * rmse
-        padded_rec_z = noise_pad(rec_z)
-        padded_rec_img = image_pad(upscaled_prev_rec_img)
+        rec_z = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
 
         for epoch in tqdm(range(self.config.num_iter), desc=f'{len(self.Gs)}th GAN'):
             # Make noise input
-            if not self.Gs:                                         # Generate fixed reconstruction noise
+            if not self.Gs:
+                rec_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)
                 random_z = generate_noise([1, real_h, real_w], device=self.config.device).expand(1, 3, real_h, real_w)
-            else:                                                   # Reconstruction noise: Filled 0
+            else:
                 random_z = generate_noise([self.config.img_channel, real_h, real_w], device=self.config.device)
+            padded_rec_z = noise_pad(rec_z)
             padded_random_z = noise_pad(random_z)
 
             # Train Discriminator: Maximize D(x) - D(G(z)) -> Minimize D(G(z)) - D(X)
             for i in range(self.config.n_critic):
-                # Make random image input
-                upscaled_prev_random_img = self.draw_sequentially('rand', noise_pad, image_pad)
-                padded_random_img = image_pad(upscaled_prev_random_img)
-                padded_random_img_with_z = self.config.noise_amp * padded_random_z + padded_random_img
-
                 # Train with real data
                 cur_discriminator.zero_grad()
                 real_prob_out = cur_discriminator(real)
                 d_real_loss = -real_prob_out.mean()                         # Maximize D(X) -> Minimize -D(X)
-                d_real_loss.backward()
+                d_real_loss.backward(retain_graph=True)
                 D_x = -d_real_loss.item()
+
+                if i == 0 and epoch == 0:
+                    if not self.Gs:
+                        self.first_img_input = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
+                        upscaled_prev_random_img = self.first_img_input
+                        padded_random_img = image_pad(upscaled_prev_random_img)
+                        upscaled_prev_rec_img = torch.full([1, self.config.img_channel, real_h, real_w], 0, device=self.config.device)
+                        padded_rec_img = image_pad(upscaled_prev_rec_img)
+                        self.config.noise_amp = 1
+                    else:
+                        upscaled_prev_random_img = self.draw_sequentially('rand', noise_pad, image_pad)
+                        padded_random_img = image_pad(upscaled_prev_random_img)
+                        upscaled_prev_rec_img = self.draw_sequentially('rec', noise_pad, image_pad)
+                        criterion = nn.MSELoss()
+                        rmse = torch.sqrt(criterion(real, upscaled_prev_rec_img))
+                        self.config.noise_amp = self.config.noise_amp_init * rmse
+                        padded_rec_img = image_pad(upscaled_prev_rec_img)
+                else:
+                    upscaled_prev_random_img = self.draw_sequentially('rand', noise_pad, image_pad)
+                    padded_random_img = image_pad(upscaled_prev_random_img)
+
+                # Make random image input
+                if not self.Gs:
+                    padded_random_img_with_z = padded_random_z
+                else:
+                    padded_random_img_with_z = (self.config.noise_amp * padded_random_z) + padded_random_img
 
                 # Train with fake data
                 fake = cur_generator(padded_random_img_with_z.detach(), padded_random_img)
                 fake_prob_out = cur_discriminator(fake.detach())
                 d_fake_loss = fake_prob_out.mean()                          # Minimize D(G(z))
-                d_fake_loss.backward()
+                d_fake_loss.backward(retain_graph=True)
                 D_G_z = d_fake_loss.item()
 
                 # Gradient penalty
-                gradient_penalty = calcul_gp(cur_discriminator, real, fake, self.config.gp_weights, self.config.device, False)
+                gradient_penalty = calcul_gp(cur_discriminator, real, fake, self.config.device, False) * self.config.gp_weights
                 gradient_penalty.backward()
 
                 D_optimizer.step()
@@ -166,22 +175,22 @@ class SinGAN:
                 cur_generator.zero_grad()
 
                 # Make fake sample for every iteration
-                upscaled_prev_random_img = self.draw_sequentially('rand', noise_pad, image_pad)
-                padded_random_img = image_pad(upscaled_prev_random_img)
-                padded_random_img_with_z = self.config.noise_amp * padded_random_z + padded_random_img
-                fake = cur_generator(padded_random_img_with_z.detach(), padded_random_img)
+                # upscaled_prev_random_img = self.draw_sequentially('rand', noise_pad, image_pad)
+                # padded_random_img = image_pad(upscaled_prev_random_img)
+                # padded_random_img_with_z = self.config.noise_amp * padded_random_z + padded_random_img
+                # fake = cur_generator(padded_random_img_with_z.detach(), padded_random_img)
 
                 # Adversarial loss
                 fake_prob_out = cur_discriminator(fake)
                 g_adv_loss = -fake_prob_out.mean()
-                g_adv_loss.backward()
+                g_adv_loss.backward(retain_graph=True)
                 g_adv_loss = g_adv_loss.item()
 
                 # Reconstruction loss
                 mse_criterion = nn.MSELoss()
                 padded_rec_img_with_z = self.config.noise_amp * padded_rec_z + padded_rec_img
                 g_rec_loss = self.config.rec_weights * mse_criterion(cur_generator(padded_rec_img_with_z.detach(), padded_rec_img), real)
-                g_rec_loss.backward()
+                g_rec_loss.backward(retain_graph=True)
                 g_rec_loss = g_rec_loss.item()
 
                 G_optimizer.step()
@@ -258,7 +267,29 @@ class SinGAN:
             start_img_input = upsampling(real_scaled, real_scaled.shape[2], real_scaled.shape[3])
         return start_img_input
 
-    def inference(self, gen_start_scale, start_img_input, scale_h, scale_w, num_samples):
+    def create_sr_inference_input(self, real, iter_num):
+        resized_real = real
+        pad = nn.ZeroPad2d(5)
+        finest_G = self.Gs[-1]
+        finest_noise_amp = self.noise_amps[-1]
+
+        self.Zs = []
+        self.Gs = []
+        self.reals = []
+        self.noise_amps = []
+
+        for i in range(iter_num):
+            resized_real = resize_img(resized_real, pow(1 / self.config.scale_factor, 1), self.config)
+            self.reals.append(resized_real)
+            self.Gs.append(finest_G)
+            self.noise_amps.append(finest_noise_amp)
+            rec_z = torch.full(resized_real.shape, 0, device=self.config.device)
+            padded_rec_z = pad(rec_z)
+            self.Zs.append(padded_rec_z)
+
+        return self.reals[0]
+
+    def inference(self, start_img_input):
         if start_img_input is None:
             start_img_input = torch.full(self.reals[0].shape, 0, device=self.config.device)
 
@@ -266,13 +297,13 @@ class SinGAN:
         for idx, (G, Z_opt, noise_amp) in tqdm(enumerate(zip(self.Gs, self.Zs, self.noise_amps))):
             padding_size = ((self.config.kernel_size - 1) * self.config.num_layers) / 2
             pad = nn.ZeroPad2d(int(padding_size))
-            output_h = (Z_opt.shape[2] - padding_size * 2) * scale_h
-            output_w = (Z_opt.shape[3] - padding_size * 2) * scale_w
+            output_h = (Z_opt.shape[2] - padding_size * 2) * self.config.scale_h
+            output_w = (Z_opt.shape[3] - padding_size * 2) * self.config.scale_w
 
             prev_images = cur_images
             cur_images = []
 
-            for i in range(num_samples):
+            for i in range(self.config.num_samples):
                 if idx == 0:
                     random_z = generate_noise([1, output_h, output_w], device=self.config.device)
                     random_z = random_z.expand(1, 3, random_z.shape[2], random_z.shape[3])
@@ -281,7 +312,7 @@ class SinGAN:
                     random_z = generate_noise([self.config.img_channel, output_h, output_w], device=self.config.device)
                     padded_random_z = pad(random_z)
 
-                if self.config.use_fixed_noise and idx < gen_start_scale:
+                if self.config.use_fixed_noise and idx < self.config.gen_start_scale:
                     padded_random_z = Z_opt
 
                 if not prev_images:
@@ -289,10 +320,15 @@ class SinGAN:
                 else:
                     prev_img = prev_images[i]
                     upscaled_prev_random_img = resize_img(prev_img, 1 / self.config.scale_factor, self.config)
-                    upscaled_prev_random_img = upscaled_prev_random_img[:, :, 0:round(scale_h * self.reals[idx].shape[2]), 0:round(scale_w * self.reals[idx].shape[3])]
-                    padded_random_img = pad(upscaled_prev_random_img)
-                    padded_random_img = padded_random_img[:, :, 0:padded_random_z.shape[2], 0:padded_random_z.shape[3]]
-                    padded_random_img = upsampling(padded_random_img, padded_random_z.shape[2], padded_random_z.shape[3])
+                    if self.config.mode == "train_SR":
+                        padded_random_img = pad(upscaled_prev_random_img)
+                    else:
+                        upscaled_prev_random_img = upscaled_prev_random_img[:, :,
+                                                   0:round(self.config.scale_h * self.reals[idx].shape[2]),
+                                                   0:round(self.config.scale_w * self.reals[idx].shape[3])]
+                        padded_random_img = pad(upscaled_prev_random_img)
+                        padded_random_img = padded_random_img[:, :, 0:padded_random_z.shape[2], 0:padded_random_z.shape[3]]
+                        padded_random_img = upsampling(padded_random_img, padded_random_z.shape[2], padded_random_z.shape[3])
 
                 padded_random_img_with_z = noise_amp * padded_random_z + padded_random_img
                 cur_image = G(padded_random_img_with_z.detach(), padded_random_img)

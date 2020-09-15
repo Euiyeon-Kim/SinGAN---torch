@@ -1,6 +1,7 @@
 class Config:
     # [BASIC CONFIGS]
-    mode = 'train'
+    mode = 'train_SR'
+    use_acm = True
     useGPU = True
     manualSeed = None
     img_channel = 3
@@ -42,16 +43,19 @@ class Config:
     beta2 = 0.999
 
     # [DATA]
-    img_path = 'Input/Images/balloons.png'
-    exp_dir = 'exp/same_net_for_PQ'             # f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
+    img_path = 'Input/Images/33039_LR.png'
+    exp_dir = 'exp/test'                        # f'exp/balloons/scale-{scale_factor}_alp-{alpha}'
     generator_path = None                       # Saved generator path
     discriminator_path = None                   # Saved discriminator path
 
     # [Inference]
-    use_fixed_noise = False
-    save_all_pyramid = False
+    use_fixed_noise = True
+    save_all_pyramid = True
     save_attention_map = True
     gen_start_scale = 0
     scale_h = 1
     scale_w = 1
-    num_samples = 100
+    num_samples = 10
+
+    # [SR]
+    sr_factor = 4

@@ -36,7 +36,7 @@ class SinGAN_ACM:
         self.reals = []
         self.noise_amps = []
         self.writer = None
-        self.first_img_input = None
+        self.first_img_input = 0
         self.log_losses = {}
 
     def init_single_layer_gan(self):
@@ -76,7 +76,6 @@ class SinGAN_ACM:
             plt.imsave(f'{self.config.result_dir}/real_scale.png', torch2np(self.reals[scale_iter]), vmin=0, vmax=1)
 
             cur_discriminator, cur_generator = self.init_single_layer_gan()
-
             if prev_nfc == self.config.nfc:
                 cur_generator.load_state_dict(torch.load(f'{self.config.exp_dir}/{scale_iter - 1}/generator.pth'))
                 cur_discriminator.load_state_dict(torch.load(f'{self.config.exp_dir}/{scale_iter - 1}/ACM_discriminator.pth'))
@@ -287,12 +286,46 @@ class SinGAN_ACM:
             start_img_input = upsampling(real_scaled, real_scaled.shape[2], real_scaled.shape[3])
         return start_img_input
 
-    def inference(self):
-        if self.config.start_img_input is None:
+    def create_sr_inference_input(self, real, iter_num):
+        resized_real = real
+        pad = nn.ZeroPad2d(5)
+        finest_G = self.Gs[-1]
+        finest_D = self.Ds[-1]
+        finest_noise_amp = self.noise_amps[-1]
+
+        self.Zs = []
+        self.Gs = []
+        self.Ds = []
+        self.reals = []
+        self.noise_amps = []
+
+        for i in range(iter_num):
+            resized_real = resize_img(resized_real, pow(1 / self.config.scale_factor, 1), self.config)
+            print(f'{self.config.infer_dir}/{0}_real.png')
+            plt.imsave(f'{self.config.infer_dir}/{0}_real.png', torch2np(resized_real), vmin=0, vmax=1)
+            self.reals.append(resized_real)
+            self.Gs.append(finest_G)
+            self.Ds.append(finest_D)
+            self.noise_amps.append(finest_noise_amp)
+            rec_z = torch.full(resized_real.shape, 0, device=self.config.device)
+            padded_rec_z = pad(rec_z)
+            self.Zs.append(padded_rec_z)
+
+        return self.reals[0]
+
+    def inference(self, start_img_input):
+        if self.config.save_attention_map:
+            global global_att_dir
+            global global_epoch
+            global_att_dir = f'{self.config.infer_dir}/attention'
+            os.makedirs(global_att_dir, exist_ok=True)
+
+        if start_img_input is None:
             start_img_input = torch.full(self.reals[0].shape, 0, device=self.config.device)
 
         cur_images = []
-        for idx, (G, Z_opt, noise_amp) in enumerate(zip(self.Gs, self.Zs, self.noise_amps)):
+
+        for idx, (G, D, Z_opt, noise_amp, real) in enumerate(zip(self.Gs, self.Ds, self.Zs, self.noise_amps, self.reals)):
             padding_size = ((self.config.kernel_size - 1) * self.config.num_layers) / 2
             pad = nn.ZeroPad2d(int(padding_size))
             output_h = (Z_opt.shape[2] - padding_size * 2) * self.config.scale_h
@@ -318,20 +351,41 @@ class SinGAN_ACM:
                 else:
                     prev_img = prev_images[i]
                     upscaled_prev_random_img = resize_img(prev_img, 1 / self.config.scale_factor, self.config)
-                    upscaled_prev_random_img = upscaled_prev_random_img[:, :,
-                                               0:round(self.config.scale_h * self.reals[idx].shape[2]),
-                                               0:round(self.config.scale_w * self.reals[idx].shape[3])]
-                    padded_random_img = pad(upscaled_prev_random_img)
-                    padded_random_img = padded_random_img[:, :, 0:padded_random_z.shape[2], 0:padded_random_z.shape[3]]
-                    padded_random_img = upsampling(padded_random_img, padded_random_z.shape[2], padded_random_z.shape[3])
+                    if self.config.mode == "train_SR":
+                        padded_random_img = pad(upscaled_prev_random_img)
+                    else:
+                        upscaled_prev_random_img = upscaled_prev_random_img[:, :,
+                                                   0:round(self.config.scale_h * self.reals[idx].shape[2]),
+                                                   0:round(self.config.scale_w * self.reals[idx].shape[3])]
+                        padded_random_img = pad(upscaled_prev_random_img)
+                        padded_random_img = padded_random_img[:, :, 0:padded_random_z.shape[2], 0:padded_random_z.shape[3]]
+                        padded_random_img = upsampling(padded_random_img, padded_random_z.shape[2], padded_random_z.shape[3])
 
                 padded_random_img_with_z = noise_amp * padded_random_z + padded_random_img
                 cur_image = G(padded_random_img_with_z.detach(), padded_random_img)
 
+                np_cur_image = torch2np(cur_image.detach())
                 if self.config.save_all_pyramid:
-                    plt.imsave(f'{self.config.infer_dir}/{i}_{idx}.png', torch2np(cur_image.detach()), vmin=0, vmax=1)
+                    plt.imsave(f'{self.config.infer_dir}/{i}_{idx}.png', np_cur_image, vmin=0, vmax=1)
+                    if self.config.save_attention_map:
+                        np_real = torch2np(real)
+                        _, _, cur_add_att_maps, cur_sub_att_maps = D(cur_image.detach())
+                        cur_add_att_maps = cur_add_att_maps.detach().to(torch.device('cpu')).numpy().transpose(1, 2, 3, 0)
+                        cur_sub_att_maps = cur_sub_att_maps.detach().to(torch.device('cpu')).numpy().transpose(1, 2, 3, 0)
+                        global_epoch = f'{i}_{idx}thG'
+                        parmap.map(save_heatmap, [[np_cur_image, cur_add_att_maps, 'infer_add'], [np_real, cur_sub_att_maps, 'infer_sub']],
+                                   pm_pbar=False, pm_processes=2)
+
                 elif idx == len(self.reals) - 1:
-                    plt.imsave(f'{self.config.infer_dir}/{i}.png', torch2np(cur_image.detach()), vmin=0, vmax=1)
+                    plt.imsave(f'{self.config.infer_dir}/{i}.png', np_cur_image, vmin=0, vmax=1)
+                    if self.config.save_attention_map:
+                        np_real = torch2np(real)
+                        _, _, cur_add_att_maps, cur_sub_att_maps = D(cur_image.detach())
+                        cur_add_att_maps = cur_add_att_maps.detach().to(torch.device('cpu')).numpy().transpose(1, 2, 3, 0)
+                        cur_sub_att_maps = cur_sub_att_maps.detach().to(torch.device('cpu')).numpy().transpose(1, 2, 3, 0)
+                        global_epoch = f'{i}_{idx}thG'
+                        parmap.map(save_heatmap, [[np_cur_image, cur_add_att_maps, 'infer_add'], [np_real, cur_sub_att_maps, 'infer_sub']],
+                                   pm_pbar=False, pm_processes=2)
 
                 cur_images.append(cur_image)
 
